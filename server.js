@@ -6,12 +6,15 @@ const { v4: uuidv4 } = require("uuid");
 const app = express();
 const port = 3001;
 const cors = require("cors");
+const { ClerkExpressRequireAuth } = require("@clerk/clerk-sdk-node");
 
 app.use(cors());
 
 app.use(express.json());
 
-app.post("/generate", (req, res) => {
+app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
+  // For testing
+  console.log("Authenticated user:", req.auth);
   const responseList = req.body;
 
   const uniqueId = uuidv4();
