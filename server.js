@@ -16,13 +16,13 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 app.use(cors());
 
 const connection = mysql.createConnection({
-  host: process.env.MYSQL_HOST, // e.g., "localhost"
-  user: process.env.MYSQL_USER, // your MySQL username
-  password: process.env.MYSQL_PASSWORD, // your MySQL password
-  database: process.env.MYSQL_DATABASE, // the database name you created
+  host: process.env.MYSQL_HOST,
+  user: process.env.MYSQL_USER,
+  password: process.env.MYSQL_PASSWORD,
+  database: process.env.MYSQL_DATABASE,
 });
 
-// For development testingx
+// For development testing
 connection.connect((err) => {
   if (err) {
     console.error("Error connecting to MySQL:", err);
