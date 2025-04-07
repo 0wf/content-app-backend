@@ -9,10 +9,11 @@ const port = 3001;
 const cors = require("cors");
 const { ClerkExpressRequireAuth } = require("@clerk/clerk-sdk-node");
 const mysql = require("mysql2");
+const Stripe = require("stripe");
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 app.use(cors());
-
-app.use(express.json());
 
 const connection = mysql.createConnection({
   host: process.env.MYSQL_HOST, // e.g., "localhost"
@@ -30,6 +31,84 @@ connection.connect((err) => {
   }
 });
 
+app.post(
+  "/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const sig = req.headers["stripe-signature"];
+    let event;
+
+    try {
+      event = stripe.webhooks.constructEvent(
+        req.body, // raw buffer
+        sig,
+        process.env.STRIPE_WEBHOOK_SECRET
+      );
+    } catch (err) {
+      console.error("Webhook signature verification failed:", err.message);
+      return res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object;
+      const userId = session.client_reference_id;
+      // Update the user's credits in your database
+      connection.query(
+        "UPDATE user_credits SET credits = credits + 50 WHERE user_id = ?",
+        [userId],
+        (err, results) => {
+          if (err) {
+            console.error("Error updating credits via webhook:", err);
+          } else {
+            console.log("Credits updated for user:", userId);
+          }
+        }
+      );
+    }
+
+    res.json({ received: true });
+  }
+);
+
+app.use(express.json());
+
+app.post(
+  "/create-checkout-session",
+  ClerkExpressRequireAuth(),
+  async (req, res) => {
+    const { userId } = req.auth;
+    // Expect the client to send which plan the user wants ("monthly" or "annual")
+    const { plan } = req.body;
+
+    try {
+      const priceId =
+        plan === "annual"
+          ? process.env.STRIPE_PRICE_ANNUAL_ID
+          : process.env.STRIPE_PRICE_MONTHLY_ID;
+
+      // Create a Stripe Checkout Session for subscription
+      const session = await stripe.checkout.sessions.create({
+        mode: "subscription",
+        payment_method_types: ["card"],
+        line_items: [
+          {
+            price: priceId,
+            quantity: 1,
+          },
+        ],
+        success_url: process.env.SUCCESS_URL,
+        cancel_url: process.env.CANCEL_URL,
+        client_reference_id: userId,
+      });
+
+      res.status(200).json({ sessionId: session.id });
+    } catch (error) {
+      console.error("Error creating checkout session:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  }
+);
+
 app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
   const { userId } = req.auth;
   connection.query(
@@ -40,10 +119,10 @@ app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
         console.error("Error fetching credits:", error);
         return res.status(500).json({ error: "Error fetching credits" });
       }
-      // If no record exists, create one with 50 credits
+      // If no record exists, create one with 0 credits
       if (results.length === 0) {
         connection.query(
-          "INSERT INTO user_credits (user_id, credits) VALUES (?, 50)",
+          "INSERT INTO user_credits (user_id, credits) VALUES (?, 0)",
           [userId],
           (insertError) => {
             if (insertError) {
@@ -52,7 +131,7 @@ app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
                 .status(500)
                 .json({ error: "Error creating credits record" });
             }
-            return res.status(200).json({ credits: 50 });
+            return res.status(200).json({ credits: 0 });
           }
         );
       } else {
@@ -63,7 +142,18 @@ app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
   );
 });
 
+let isGenerating = false;
+
 app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
+  if (isGenerating) {
+    return res.status(429).json({
+      error:
+        "A video generation process is already in progress. Please try again later.",
+    });
+  }
+
+  isGenerating = true; // Lock for this request
+
   const { userId } = req.auth;
   connection.query(
     "UPDATE user_credits SET credits = credits - 1 WHERE user_id = ? AND credits > 0",
@@ -71,10 +161,12 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
     (updateError, updateResults) => {
       if (updateError) {
         console.error("Error decrementing credits:", updateError);
+        isGenerating = false;
         return res.status(500).json({ error: "Error updating credits" });
       }
       // If no rows were updated, the user doesn't have enough credits.
       if (updateResults.affectedRows === 0) {
+        isGenerating = false;
         return res.status(400).json({ error: "Not enough credits" });
       }
 
@@ -112,6 +204,9 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
           `output_info_${uniqueId}.json`
         );
         fs.readFile(outputFilePath, "utf8", (err, fileData) => {
+          // Reset the lock no matter what happens
+          isGenerating = false;
+
           if (err) {
             console.error("Error reading output file:", err);
             return res.status(500).send("Error reading output file");
@@ -132,6 +227,12 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
             res.status(500).send("Error parsing output file");
           }
         });
+      });
+
+      pythonProcess.on("error", (err) => {
+        console.error("Python process error:", err);
+        isGenerating = false;
+        return res.status(500).json({ error: "Error generating video" });
       });
     }
   );
