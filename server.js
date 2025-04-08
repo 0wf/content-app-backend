@@ -15,19 +15,22 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
 app.use(cors());
 
-const connection = mysql.createConnection({
+const pool = mysql.createPool({
   host: process.env.MYSQL_HOST,
   user: process.env.MYSQL_USER,
   password: process.env.MYSQL_PASSWORD,
   database: process.env.MYSQL_DATABASE,
-});
-
-// For development testing
-connection.connect((err) => {
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+  });
+  // For development test connection on startup
+  pool.getConnection((err, conn) => {
   if (err) {
-    console.error("Error connecting to MySQL:", err);
+    console.error("MySQL pool connection error:", err);
   } else {
-    console.log("Connected to MySQL!");
+    console.log("MySQL pool is ready");
+    conn.release();
   }
 });
 
@@ -53,7 +56,7 @@ app.post(
       const session = event.data.object;
       const userId = session.client_reference_id;
       // Update the user's credits in your database
-      connection.query(
+      pool.query(
         "UPDATE user_credits SET credits = credits + 50 WHERE user_id = ?",
         [userId],
         (err, results) => {
@@ -111,7 +114,7 @@ app.post(
 
 app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
   const { userId } = req.auth;
-  connection.query(
+  pool.query(
     "SELECT credits FROM user_credits WHERE user_id = ?",
     [userId],
     (error, results) => {
@@ -121,7 +124,7 @@ app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
       }
       // If no record exists, create one with 0 credits
       if (results.length === 0) {
-        connection.query(
+        pool.query(
           "INSERT INTO user_credits (user_id, credits) VALUES (?, 0)",
           [userId],
           (insertError) => {
@@ -155,7 +158,7 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
   isGenerating = true; // Lock for this request
 
   const { userId } = req.auth;
-  connection.query(
+  pool.query(
     "UPDATE user_credits SET credits = credits - 1 WHERE user_id = ? AND credits > 0",
     [userId],
     (updateError, updateResults) => {
