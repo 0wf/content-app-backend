@@ -10,6 +10,7 @@ const cors = require("cors");
 const { ClerkExpressRequireAuth } = require("@clerk/clerk-sdk-node");
 const mysql = require("mysql2");
 const Stripe = require("stripe");
+const axios = require("axios");
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
@@ -239,6 +240,41 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
       });
     }
   );
+});
+
+app.get("/reddit-post-title", ClerkExpressRequireAuth(), async (req, res) => {
+  const redditUrl = req.query.url;
+
+  if (!redditUrl) {
+    return res
+      .status(400)
+      .json({ error: "The 'url' query parameter is required." });
+  }
+
+  try {
+    let formattedUrl = redditUrl;
+    if (!formattedUrl.endsWith("/")) {
+      formattedUrl += "/";
+    }
+    formattedUrl += ".json";
+
+    // Fetch the reddit post JSON
+    const response = await axios.get(formattedUrl, {
+      headers: {
+        "User-Agent": "MyRedditApp/1.0",
+      },
+    });
+    const postData = response.data[0]?.data?.children[0]?.data;
+    if (!postData || !postData.title) {
+      return res
+        .status(404)
+        .json({ error: "Unable to extract the title from the Reddit post." });
+    }
+    res.json({ title: postData.title });
+  } catch (error) {
+    console.error("Error fetching Reddit post title:", error.message);
+    res.status(500).json({ error: "Error fetching Reddit post title" });
+  }
 });
 
 app.get("/test", (req, res) => {
