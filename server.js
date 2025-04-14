@@ -23,10 +23,10 @@ const pool = mysql.createPool({
   database: process.env.MYSQL_DATABASE,
   waitForConnections: true,
   connectionLimit: 10,
-  queueLimit: 0
-  });
-  // For development test connection on startup
-  pool.getConnection((err, conn) => {
+  queueLimit: 0,
+});
+// For development test connection on startup
+pool.getConnection((err, conn) => {
   if (err) {
     console.error("MySQL pool connection error:", err);
   } else {
@@ -244,35 +244,41 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
 
 app.get("/reddit-post-title", ClerkExpressRequireAuth(), async (req, res) => {
   const redditUrl = req.query.url;
-
   if (!redditUrl) {
     return res
       .status(400)
       .json({ error: "The 'url' query parameter is required." });
   }
 
-  try {
-    let formattedUrl = redditUrl;
-    if (!formattedUrl.endsWith("/")) {
-      formattedUrl += "/";
-    }
-    formattedUrl += ".json";
+  // Build the oEmbed URL
+  const oembedUrl =
+    "https://www.reddit.com/oembed?url=" + encodeURIComponent(redditUrl);
 
-    // Fetch the reddit post JSON
-    const response = await axios.get(formattedUrl, {
-      headers: {
-        "User-Agent": "MyRedditApp/1.0",
-      },
+  console.log("[reddit-post‑title] hitting oEmbed:", oembedUrl);
+
+  try {
+    const response = await axios.get(oembedUrl, {
+      headers: { "User-Agent": "MyRedditApp/1.0" },
+      timeout: 10000,
     });
-    const postData = response.data[0]?.data?.children[0]?.data;
-    if (!postData || !postData.title) {
+    // oEmbed payload includes "title"
+    const title = response.data?.title;
+    if (!title) {
+      console.error(
+        "[reddit-post‑title] no title in oEmbed response:",
+        response.data
+      );
       return res
         .status(404)
-        .json({ error: "Unable to extract the title from the Reddit post." });
+        .json({ error: "Could not extract title from oEmbed response." });
     }
-    res.json({ title: postData.title });
-  } catch (error) {
-    console.error("Error fetching Reddit post title:", error.message);
+    console.log("[reddit-post‑title] title:", title);
+    res.json({ title });
+  } catch (err) {
+    console.error(
+      "[reddit-post‑title] oEmbed fetch error:",
+      err.toJSON ? err.toJSON() : err
+    );
     res.status(500).json({ error: "Error fetching Reddit post title" });
   }
 });
