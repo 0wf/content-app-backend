@@ -250,11 +250,9 @@ app.get("/reddit-post-title", ClerkExpressRequireAuth(), async (req, res) => {
       .json({ error: "The 'url' query parameter is required." });
   }
 
-  // Build the oEmbed URL
+  // Build the oEmbed URL this 
   const oembedUrl =
     "https://www.reddit.com/oembed?url=" + encodeURIComponent(redditUrl);
-
-  console.log("[reddit-post‑title] hitting oEmbed:", oembedUrl);
 
   try {
     const response = await axios.get(oembedUrl, {
@@ -272,7 +270,6 @@ app.get("/reddit-post-title", ClerkExpressRequireAuth(), async (req, res) => {
         .status(404)
         .json({ error: "Could not extract title from oEmbed response." });
     }
-    console.log("[reddit-post‑title] title:", title);
     res.json({ title });
   } catch (err) {
     console.error(
