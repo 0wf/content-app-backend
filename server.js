@@ -164,6 +164,44 @@ app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
   );
 });
 
+app.get("/plan", ClerkExpressRequireAuth(), (req, res) => {
+  const { userId } = req.auth;
+
+  pool.query(
+    "SELECT subscription_status FROM user_credits WHERE user_id = ?",
+    [userId],
+    (error, results) => {
+      if (error) {
+        console.error("Error fetching subscription status:", error);
+        return res
+          .status(500)
+          .json({ error: "Error fetching subscription status" });
+      }
+
+      // No record yet? insert a row (defaults subscription_status to 'none') then return 'none'
+      if (results.length === 0) {
+        pool.query(
+          "INSERT INTO user_credits (user_id, credits) VALUES (?, 0)",
+          [userId],
+          (insertError) => {
+            if (insertError) {
+              console.error("Error inserting new user record:", insertError);
+              return res
+                .status(500)
+                .json({ error: "Error creating user record" });
+            }
+            // newly created rows use the table default of 'none'
+            return res.status(200).json({ plan: "none" });
+          }
+        );
+      } else {
+        const plan = results[0].subscription_status;
+        return res.status(200).json({ plan });
+      }
+    }
+  );
+});
+
 let isGenerating = false;
 
 app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
@@ -268,7 +306,7 @@ app.get("/reddit-post-title", ClerkExpressRequireAuth(), async (req, res) => {
       .json({ error: "The 'url' query parameter is required." });
   }
 
-  // Build the oEmbed URL this 
+  // Build the oEmbed URL this
   const oembedUrl =
     "https://www.reddit.com/oembed?url=" + encodeURIComponent(redditUrl);
 
