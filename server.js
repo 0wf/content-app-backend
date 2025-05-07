@@ -54,17 +54,35 @@ app.post(
     }
 
     if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
+      const session = await stripe.checkout.sessions.retrieve(
+        event.data.object.id,
+        {
+          expand: ["line_items.data.price"],
+        }
+      );
+
       const userId = session.client_reference_id;
+      const priceId = session.line_items.data[0].price.id;
+
+      let plan = "none";
+      if (priceId === process.env.STRIPE_PRICE_ANNUAL_ID) {
+        plan = "annual";
+      } else if (priceId === process.env.STRIPE_PRICE_MONTHLY_ID) {
+        plan = "monthly";
+      }
+
       // Update the user's credits in your database
       pool.query(
-        "UPDATE user_credits SET credits = credits + 50 WHERE user_id = ?",
-        [userId],
+        `UPDATE user_credits
+           SET credits = credits + 50,
+               subscription_status = ?
+         WHERE user_id = ?`,
+        [plan, userId],
         (err, results) => {
           if (err) {
             console.error("Error updating credits via webhook:", err);
           } else {
-            console.log("Credits updated for user:", userId);
+            console.log(`User ${userId}: +50 credits, plan set to ${plan}`);
           }
         }
       );
