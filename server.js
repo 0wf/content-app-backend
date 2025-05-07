@@ -63,6 +63,7 @@ app.post(
 
       const userId = session.client_reference_id;
       const priceId = session.line_items.data[0].price.id;
+      const subscriptionId = session.subscription.id;
 
       let plan = "none";
       if (priceId === process.env.STRIPE_PRICE_ANNUAL_ID) {
@@ -75,15 +76,34 @@ app.post(
       pool.query(
         `UPDATE user_credits
            SET credits = credits + 50,
-               subscription_status = ?
+               subscription_status = ?,
+               subscription_id = ?
          WHERE user_id = ?`,
-        [plan, userId],
+        [plan, subscriptionId, userId],
         (err, results) => {
           if (err) {
             console.error("Error updating credits via webhook:", err);
           } else {
             console.log(`User ${userId}: +50 credits, plan set to ${plan}`);
           }
+        }
+      );
+    }
+
+    if (event.type === "customer.subscription.deleted") {
+      const subscription = event.data.object;
+      const subscriptionId = subscription.id;
+
+      // clear status & id for any user with this sub
+      pool.query(
+        `UPDATE user_credits
+        SET subscription_status = 'none',
+            subscription_id = NULL
+      WHERE subscription_id = ?`,
+        [subscriptionId],
+        (err) => {
+          if (err) console.error("Error clearing cancelled sub:", err);
+          else console.log(`Cleared cancelled subscription ${subscriptionId}`);
         }
       );
     }
@@ -201,6 +221,38 @@ app.get("/plan", ClerkExpressRequireAuth(), (req, res) => {
     }
   );
 });
+
+app.post(
+  "/api/cancel-subscription",
+  ClerkExpressRequireAuth(),
+  async (req, res) => {
+    const { userId } = req.auth;
+
+    try {
+      // 1) Look up their Stripe subscription ID
+      const [[row]] = await pool
+        .promise()
+        .query("SELECT subscription_id FROM user_credits WHERE user_id = ?", [
+          userId,
+        ]);
+
+      if (!row || !row.subscription_id) {
+        return res
+          .status(400)
+          .json({ error: "No active subscription to cancel." });
+      }
+
+      // 2) Only call Stripe to delete it—no DB update here
+      await stripe.subscriptions.del(row.subscription_id);
+
+      // 3) Respond immediately so the UI can reset if you want
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Error cancelling subscription:", err);
+      res.status(500).json({ error: "Could not cancel subscription." });
+    }
+  }
+);
 
 let isGenerating = false;
 
