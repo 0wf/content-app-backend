@@ -186,42 +186,58 @@ app.get("/credits", ClerkExpressRequireAuth(), (req, res) => {
   );
 });
 
-app.get("/plan", ClerkExpressRequireAuth(), (req, res) => {
+app.get("/plan", ClerkExpressRequireAuth(), async (req, res) => {
   const { userId } = req.auth;
 
-  pool.query(
-    "SELECT subscription_status FROM user_credits WHERE user_id = ?",
-    [userId],
-    (error, results) => {
-      if (error) {
-        console.error("Error fetching subscription status:", error);
-        return res
-          .status(500)
-          .json({ error: "Error fetching subscription status" });
-      }
+  try {
+    const [[row]] = await pool
+      .promise()
+      .query(
+        "SELECT subscription_status, subscription_id FROM user_credits WHERE user_id = ?",
+        [userId]
+      );
 
-      // No record yet? insert a row (defaults subscription_status to 'none') then return 'none'
-      if (results.length === 0) {
-        pool.query(
-          "INSERT INTO user_credits (user_id, credits) VALUES (?, 0)",
-          [userId],
-          (insertError) => {
-            if (insertError) {
-              console.error("Error inserting new user record:", insertError);
-              return res
-                .status(500)
-                .json({ error: "Error creating user record" });
-            }
-            // newly created rows use the table default of 'none'
-            return res.status(200).json({ plan: "none" });
-          }
-        );
-      } else {
-        const plan = results[0].subscription_status;
-        return res.status(200).json({ plan });
-      }
+    // If no row yet, insert the defaults and return 'none'
+    if (!row) {
+      await pool
+        .promise()
+        .query("INSERT INTO user_credits (user_id, credits) VALUES (?, 0)", [
+          userId,
+        ]);
+      return res.json({
+        plan: "none",
+        cancelled: false,
+        cancelAtPeriodEnd: false,
+        periodEnd: null,
+      });
     }
-  );
+
+    const plan = row.subscription_status; // "none"|"annual"|"monthly"
+    const subscriptionId = row.subscription_id;
+
+    let cancelled = false;
+    let cancelAtPeriodEnd = false;
+    let periodEnd = null;
+
+    // If you have a Stripe subscription ID, fetch its real status
+    if (subscriptionId) {
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+
+      cancelled = subscription.status === "canceled";
+      cancelAtPeriodEnd = subscription.cancel_at_period_end;
+      periodEnd = subscription.current_period_end; // UNIX timestamp
+    }
+
+    return res.json({
+      plan,
+      cancelled,
+      cancelAtPeriodEnd,
+      periodEnd,
+    });
+  } catch (err) {
+    console.error("Error fetching plan info:", err);
+    return res.status(500).json({ error: "Could not fetch subscription info" });
+  }
 });
 
 app.post(
