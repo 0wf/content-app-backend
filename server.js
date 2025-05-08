@@ -225,7 +225,7 @@ app.get("/plan", ClerkExpressRequireAuth(), async (req, res) => {
 
       cancelled = subscription.status === "canceled";
       cancelAtPeriodEnd = subscription.cancel_at_period_end;
-      periodEnd = subscription.current_period_end; // UNIX timestamp
+      periodEnd = subscription.cancel_at; // UNIX timestamp
     }
 
     return res.json({
