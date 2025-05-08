@@ -57,7 +57,7 @@ app.post(
       const session = await stripe.checkout.sessions.retrieve(
         event.data.object.id,
         {
-          expand: ["line_items.data.price"],
+          expand: ["subscription", "line_items.data.price"],
         }
       );
 
@@ -84,7 +84,9 @@ app.post(
           if (err) {
             console.error("Error updating credits via webhook:", err);
           } else {
-            console.log(`User ${userId}: +50 credits, plan set to ${plan}`);
+            console.log(
+              `User ${userId}: +50 credits, plan set to ${plan}, sub ID: ${subscriptionId}`
+            );
           }
         }
       );
@@ -223,7 +225,7 @@ app.get("/plan", ClerkExpressRequireAuth(), (req, res) => {
 });
 
 app.post(
-  "/api/cancel-subscription",
+  "/cancel-subscription",
   ClerkExpressRequireAuth(),
   async (req, res) => {
     const { userId } = req.auth;
@@ -243,7 +245,9 @@ app.post(
       }
 
       // 2) Only call Stripe to delete it—no DB update here
-      await stripe.subscriptions.del(row.subscription_id);
+      await stripe.subscriptions.update(row.subscription_id, {
+        cancel_at_period_end: true,
+      });
 
       // 3) Respond immediately so the UI can reset if you want
       res.json({ success: true });
