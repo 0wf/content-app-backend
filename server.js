@@ -110,6 +110,31 @@ app.post(
       );
     }
 
+    if (
+      event.type === "invoice.payment_succeeded" &&
+      event.data.object.billing_reason === "subscription_cycle"
+    ) {
+      const subscriptionId = event.data.object.subscription;
+
+      pool.query(
+        `UPDATE user_credits
+     SET credits = credits + 50
+     WHERE subscription_id = ?`,
+        [subscriptionId],
+        (err, results) => {
+          if (err) {
+            console.error("Error adding monthly credits:", err);
+          } else if (results.affectedRows > 0) {
+            console.log(`Added 50 credits for subscription ${subscriptionId}`);
+          } else {
+            console.warn(
+              `No user found with subscription ID ${subscriptionId} for crediting`
+            );
+          }
+        }
+      );
+    }
+
     res.json({ received: true });
   }
 );
