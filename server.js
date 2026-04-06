@@ -299,17 +299,18 @@ app.post(
   }
 );
 
-let isGenerating = false;
+const MAX_CONCURRENT_GENERATIONS = 3;
+let activeGenerations = 0;
 
 app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
-  if (isGenerating) {
+  if (activeGenerations >= MAX_CONCURRENT_GENERATIONS) {
     return res.status(429).json({
       error:
-        "A video generation process is already in progress. Please try again later.",
+        "Too many videos are being generated right now. Please try again later.",
     });
   }
 
-  isGenerating = true; // Lock for this request
+  activeGenerations++;
 
   const { userId } = req.auth;
   pool.query(
@@ -318,12 +319,12 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
     (updateError, updateResults) => {
       if (updateError) {
         console.error("Error decrementing credits:", updateError);
-        isGenerating = false;
+        activeGenerations--;
         return res.status(500).json({ error: "Error updating credits" });
       }
       // If no rows were updated, the user doesn't have enough credits.
       if (updateResults.affectedRows === 0) {
-        isGenerating = false;
+        activeGenerations--;
         return res.status(400).json({ error: "Not enough credits" });
       }
 
@@ -361,8 +362,7 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
           `output_info_${uniqueId}.json`
         );
         fs.readFile(outputFilePath, "utf8", (err, fileData) => {
-          // Reset the lock no matter what happens
-          isGenerating = false;
+          activeGenerations--;
 
           if (err) {
             console.error("Error reading output file:", err);
@@ -388,7 +388,7 @@ app.post("/generate", ClerkExpressRequireAuth(), (req, res) => {
 
       pythonProcess.on("error", (err) => {
         console.error("Python process error:", err);
-        isGenerating = false;
+        activeGenerations--;
         return res.status(500).json({ error: "Error generating video" });
       });
     }
